@@ -4,11 +4,9 @@
 */
 class googleAPI2ConfigForm {
 	public $client;
-	private $isAuthenticated;
 	
 	public function __construct($client) {
 		$this->client = $client;
-		$this->isAuthenticated = $this->client -> is_authenticated();
 	}
 	
 	public function make_form() {
@@ -37,26 +35,24 @@ class googleAPI2ConfigForm {
 			'#description' => t('Client Secret created for the app in the Google API Console'),
 		);
 
-		if ($this->isAuthenticated && variable_get('googleAPI2PropertyId', '')) {
+		if ($this->client -> is_authenticated() && variable_get("googleAPI2PropertyId", '')) {
 			try{
-				// If authentication was successful, try to get list of profiles
-				$profile = $this->client -> get_property_name();
+				// If authentication was successful, try to get the profile name
+				$profile = $this->client -> get_profile_info();
 
 				$form['googleAnalyticsProfile'] = array(
 					'#type' => 'item',
 					'#title' => t('Google Analytics profile for this HQ is: '),
-					'#value' => $profile,
+					'#value' => $profile['name'],
 				);
 			}
 			catch (Exception $e) {
 				// If unable to get profiles, throw an error
-				$this->isAuthenticated = false;
-				delete_googleAPI2_vars();
 				drupal_set_message(t("Could not retrieve profile. Please make sure you have entered the correct property ID for your HQ site and try authenticating again."), 'error', false);
 			}
 		}
 
-		if (!$this->isAuthenticated) {
+		if (!$this->client -> is_authenticated()) {
 			// If site is not authenticated, add standard submit buttons
 			$form['auth'] = array(
 				'#type' => 'submit',
