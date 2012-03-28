@@ -1,0 +1,213 @@
+<?php
+/*
+Copyright (c) 2012-2013 Jon Plaut
+
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the "Software"), to deal
+* in the Software without restriction, including without limitation the rights
+* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+* copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+* THE SOFTWARE.
+*/
+
+/*
+* To do: 
+* Set variables in a more memory-effiecient way (bulk set instead of individual)
+*/
+
+
+require_once("GoogleAPI2AuthenticatedClient.php");
+require_once("GoogleAPI2ConfigForm.php");
+
+define("SCOPE", "https://www.googleapis.com/auth/analytics.readonly");
+
+/*
+* Implements hook_menu
+*/
+function googleAPI2_menu() {
+	$items = array();
+	
+	$items['siteAnalytics'] = array(
+		'title' => 'Site Analytics 2',
+		'page callback' => 'googleAPI2_all',
+		'access arguments' => array('access googleAPI2 content'),
+		'weight' => 9,
+		'type' => MENU_NORMAL_ITEM,
+	);
+	
+	$items['admin/settings/googleAPI2'] = array(
+		'title' => t('Google API Settings'),
+		'description' => t('Google API configuration page'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('googleAPI2_config'),
+		'access arguments' => array('access googleAPI2 content'),
+		'type' => MENU_CALLBACK,
+	);
+	
+	return $items;
+}
+
+/*
+* Implements hook_help
+*/
+function googleAPI2_help($path, $arg) {
+	$output = '';
+	
+	switch($path) {
+		case "admin/help#googleAPI2":
+			$output = '<p>' . t("Helps integrate Drupal sites with the Google API.");
+			break;
+	}
+	return $output;
+}
+
+function set_google_analytics_vars($propertyId) {
+	variable_set('googleAPI2PropertyId', $propertyId);
+	$propertyIdArray = split('-', $propertyId);
+	variable_set("googleAPI2AccountId", $propertyIdArray[1]);
+	variable_set("googleAPI2PropertyIndex", $propertyIdArray[2]);
+}
+/*
+* Deletes all googleAPI2 variables set during configuration
+*/
+function delete_googleAPI2_vars() {
+	variable_del("googleAPI2ClientId");
+	variable_del("googleAPI2ClientSecret");
+	variable_del("googleAPI2AccessToken");
+	variable_del("googleAPI2RefreshToken");
+	variable_del("googleAPI2TokenExpire");
+	variable_del("googleAPI2FullResponse");
+	variable_del("googleAPI2PropertyId");
+	variable_del("googleAPI2AccountId");
+	variable_del("googleAPI2PropertyName");
+	variable_del("googleAPI2PropertyIndex");
+	variable_del("googleAPI2ProfileId");
+}
+
+/*
+* googleAPI2 configuration page
+*/
+function googleAPI2_config($form) {
+	$client = new GoogleApi2AuthenticatedClient($unuthenticatedClient);
+	
+	$form = new googleAPI2ConfigForm($client);
+	$form = $form -> make_form();
+	
+	return $form;
+}
+
+/*
+* Validate the configuration form. If Client ID or Client Secret
+* are not filled in, throw an error.
+*/
+function googleAPI2_config_validate($form, &$form_state) {
+	if (!$form_state['values']['googleAPI2ClientId'] || !$form_state['values']['googleAPI2ClientSecret']) {
+		form_set_error('', t('You must enter a valid client ID and client Secret.'));
+	}
+	
+	if (!$form_state['values']['uaNumber']) {
+		form_set_error('', t('You must enter a valid Google Analytics Profile ID.'));
+	}
+}
+
+/*
+* Begins authentication process. 
+* Performed when the first time the user requests authentication
+*/
+function googleAPI2_config_auth($form, &$form_state) {	
+	set_google_analytics_vars($form_state['values']['uaNumber']);
+	
+	variable_set("googleAPI2ClientId", $form_state['values']['googleAPI2ClientId']);
+	variable_set("googleAPI2ClientSecret", $form_state['values']['googleAPI2ClientSecret']);
+	
+	$authURL = new GoogleApi2AuthenticatedClient();
+	$authURL = $authURL -> get_auth_url();
+	
+	header("Location: " . $authURL);
+	
+	drupal_page_footer();
+	exit;
+}
+
+/*
+* Unsets all googleAPI2 variables.
+* Performed when a user hits "Deauthenticate" on the config page
+*/ 
+function googleAPI2_config_deauth($form, &$form_state) {
+	delete_googleAPI2_vars();
+	drupal_set_message("Site successfully deauthenticated.");
+}
+
+/*
+* Saves googleAPI2 config settings.
+* Performed when user is authenticated and hits "Save" on the config form
+*/
+function googleAPI2_config_save($form, &$form_state) {
+	if ($form_state['values']['googleAPI2ClientId'] != variable_get("googleAPI2ClientId", "") || 
+		$form_state['values']['googleAPI2ClientSecret'] != variable_get("googleAPI2ClientSecret", "")) {
+		delete_googleAPI2_vars();
+		variable_set("googleAPI2ClientId", $form_state['values']['googleAPI2ClientId']);
+		variable_set("googleAPI2ClientSecret", $form_state['values']['googleAPI2ClientSecret']);
+		googleAPI2_config_auth($form, $form_state);
+	} elseif ($form_state['values']['uaNumber'] != variable_get("googleAPI2PropertyId", "")) {
+		variable_del('googleAPI2ProfileId');
+		variable_del('googleAPI2ProfileName');
+		variable_del('googleAPI2PropertyName');
+		set_google_analytics_vars($form_state['values']['uaNumber']);
+		$client = new GoogleAPI2AuthenticatedClient();
+		$client -> get_property_name();
+	}
+		
+	drupal_set_message('Settings saved.');
+}
+
+/*
+* Called when user accesses the "Site Analytics" page.
+* Displays Google Analytics data.
+*/
+function googleAPI2_all() {
+	$output = "";
+	
+	if (variable_get('googleAPI2AccessToken', '')) {
+		$client = new GoogleApi2AuthenticatedClient();
+
+		if ($client->is_authenticated()) {
+			try {
+				//If authentication was successful, display Google Analytics data
+				$profile = $client->get_profile_id();
+				$data = $client->service->data_ga -> get(
+					'ga:' . $profile,
+					'2005-01-01',
+					date('Y-m-d'),
+					'ga:visits,ga:pageviews',
+					array(
+						'fields' => 'totalsForAllResults',
+					)
+				);
+				foreach ($data as $elem) {
+					$output .= "<li>Visits: " . $elem['ga:visits'] . "</li><li>Page Views: " . $elem['ga:pageviews'] . "</li>";
+				}
+			}
+			catch (Exception $e) {
+				// If unable to get data, throw an error.
+				$output .= "<p>Unable to get data from Google. Please " . l('reconfigure Google API', 'admin/settings/googleAPI2') . ".</p>";
+			}
+		}
+	} else {
+			// If user is not authenticated, send user to googleAPI2 config page
+			$output .= "<p>Please " . l('configure Google API', 'admin/settings/googleAPI2') . ".</p>";
+	}
+	
+	return $output;
+}
